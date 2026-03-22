@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Theater of War — WWII Grand Strategy</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{width:100%;height:100%;overflow:hidden}
+body{background:#0c1018;color:#eef1f5;font-family:'Segoe UI','Helvetica Neue',sans-serif}
+button{font-family:inherit;cursor:pointer}
+input{font-family:inherit}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:#0c1018}
+::-webkit-scrollbar-thumb{background:#2a3a52;border-radius:3px}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,68,68,0.5)}70%{box-shadow:0 0 0 8px rgba(255,68,68,0)}100%{box-shadow:0 0 0 0 rgba(255,68,68,0)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useCallback,useMemo,useEffect,useRef}=React;
+
+// ══════════════════ CONSTANTS ══════════════════
+const BASE="./";
+const MAPS={
+  overview:BASE+"map_world_overview.png",
+  west_europe:BASE+"map_west_europe.png",
+  east_front:BASE+"map_east_front.png",
+  africa_mideast:BASE+"map_africa_mideast.png",
+  asia_pacific:BASE+"map_asia_pacific.png",
+};
+const TABS=["overview","west_europe","east_front","africa_mideast","asia_pacific"];
+const TAB_LBL={overview:"World Overview",west_europe:"Western Europe",east_front:"Eastern Front",africa_mideast:"Africa & Middle East",asia_pacific:"Asia & Pacific"};
+
+const NO=["germany","uk","ussr","usa","japan","italy","france","china"];
+const NAT={
+  germany:{nm:"Germany",col:"#555",acc:"#e0e0e0",fl:"🇩🇪",sr:{i:15,o:5,m:10,p:8},rb:{land:2,secret:1},sp:"Blitzkrieg: +2 on first attack per territory"},
+  uk:{nm:"United Kingdom",col:"#1a7a1a",acc:"#88ff88",fl:"🇬🇧",sr:{i:12,o:4,m:8,p:7},rb:{intel:2,naval:1},sp:"Colonial Empire: overseas resources & naval supremacy"},
+  ussr:{nm:"Soviet Union",col:"#aa2222",acc:"#ff8888",fl:"☭",sr:{i:10,o:6,m:15,p:5},rb:{land:1,logistics:2},sp:"Great Purge: −2 combat until Turn 12"},
+  usa:{nm:"United States",col:"#2255aa",acc:"#88bbff",fl:"🇺🇸",sr:{i:8,o:8,m:6,p:6},rb:{logistics:2,secret:2},sp:"Isolationism: cannot deploy military until triggered"},
+  japan:{nm:"Japan",col:"#bb3333",acc:"#ff9999",fl:"🇯🇵",sr:{i:10,o:2,m:8,p:7},rb:{naval:2,land:1},sp:"Bushido: +1 home defense. Oil Crisis: −2 oil/turn without oil territories"},
+  italy:{nm:"Italy",col:"#228866",acc:"#66ffcc",fl:"🇮🇹",sr:{i:6,o:1,m:5,p:4},rb:{naval:1},sp:"Fragile Regime: may switch sides if Political Capital < 2"},
+  france:{nm:"France",col:"#3366bb",acc:"#99bbff",fl:"🇫🇷",sr:{i:8,o:1,m:6,p:5},rb:{intel:1},sp:"Maginot Line: +3 defense on French home territory"},
+  china:{nm:"China",col:"#887722",acc:"#ffdd66",fl:"🇨🇳",sr:{i:3,o:0,m:12,p:3},rb:{land:1},sp:"Guerrilla Warfare: +2 defense in Chinese territories"},
+};
+
+const UNITS={
+  infantry:{nm:"Infantry",ic:"⚔️",a:2,d:3,cost:{i:2,m:2}},
+  armor:{nm:"Armor",ic:"🛡️",a:4,d:2,cost:{i:4,o:1,m:1}},
+  fighter:{nm:"Fighter",ic:"✈️",a:3,d:3,cost:{i:3,o:1}},
+  bomber:{nm:"Bomber",ic:"💣",a:5,d:1,cost:{i:5,o:2}},
+  fleet:{nm:"Fleet",ic:"🚢",a:4,d:4,cost:{i:6,o:2,m:2}},
+  sub:{nm:"Submarine",ic:"🔱",a:3,d:1,cost:{i:4,o:1}},
+};
+
+const RES={
+  land:{nm:"Land Doctrine",ic:"🏔️",t:[
+    {id:"ca",nm:"Combined Arms",c:4,ef:"+1 Infantry atk with Armor"},
+    {id:"aa",nm:"Advanced Armor",c:6,ef:"Armor +1 atk/def"},
+    {id:"ww",nm:"Winter Warfare",c:5,ef:"+2 def in USSR territories"},
+    {id:"ft",nm:"Fortification",c:4,ef:"Bunkers: +2 territory def"},
+  ]},
+  naval:{nm:"Naval & Air",ic:"⚓",t:[
+    {id:"cd",nm:"Carrier Doctrine",c:5,ef:"Fighters support naval combat"},
+    {id:"sb",nm:"Strategic Bombing",c:6,ef:"Bombers reduce enemy industry"},
+    {id:"sw",nm:"Sub Warfare",c:4,ef:"Submarines +2 vs fleets"},
+    {id:"as",nm:"Air Superiority",c:5,ef:"Fighters +1 all friendly combat"},
+  ]},
+  intel:{nm:"Intelligence",ic:"🔍",t:[
+    {id:"rd",nm:"Radar",c:4,ef:"See enemy units in adjacent territories"},
+    {id:"cb",nm:"Codebreaking",c:6,ef:"Reveal one enemy's planned moves"},
+    {id:"es",nm:"Espionage",c:5,ef:"Sabotage: −1 enemy resource"},
+    {id:"dc",nm:"Deception",c:5,ef:"+2 attack on surprise assault"},
+  ]},
+  logistics:{nm:"Industry & Logistics",ic:"🏭",t:[
+    {id:"mp",nm:"Mass Production",c:5,ef:"All unit costs −1 industry"},
+    {id:"sf",nm:"Synthetic Fuel",c:6,ef:"+2 oil per turn"},
+    {id:"sl",nm:"Supply Lines",c:4,ef:"Units +1 movement range"},
+    {id:"we",nm:"War Economy",c:7,ef:"+3 industry per turn"},
+  ]},
+  secret:{nm:"Secret Weapons",ic:"⚛️",t:[
+    {id:"rk",nm:"Rocketry",c:5,ef:"V-weapons: 2 damage to any territory"},
+    {id:"jt",nm:"Jet Aircraft",c:6,ef:"Fighters +2 atk, +1 def"},
+    {id:"nr",nm:"Nuclear Research",c:8,ef:"Prerequisite for Atomic Bomb"},
+    {id:"ab",nm:"Atomic Bomb",c:12,ef:"Devastating single-use weapon",rq:"nr"},
+  ]},
+};
+
+const EVENTS=[
+  {t:1,title:"Invasion of Poland",desc:"Germany invades Poland. WWII officially begins. The United Kingdom and France declare war on Germany."},
+  {t:4,title:"Winter War",desc:"The Soviet Union invades Finland. The world watches fierce Finnish resistance."},
+  {t:7,title:"Fall of France?",desc:"May 1940 — Historically, Germany launched its Western offensive. Will France hold?"},
+  {t:10,title:"Battle of Britain",desc:"Germany can attempt strategic bombing of Britain. RAF radar technology is put to the test."},
+  {t:12,title:"Purge Recovery",desc:"Soviet military reforms take effect. The Great Purge combat penalty is removed."},
+  {t:15,title:"Operation Barbarossa?",desc:"June 1941 — Historically, Germany invaded the Soviet Union. Will the Eastern Front open?"},
+  {t:18,title:"Lend-Lease Expansion",desc:"The USA can now send double Lend-Lease resources to Allied nations."},
+  {t:22,title:"Turning Point",desc:"Stalingrad. El Alamein. Midway. Around this time historically, the tide of the war shifted."},
+  {t:27,title:"Pearl Harbor Pressure",desc:"If the USA is still isolationist, domestic pressure mounts. −2 Political Capital."},
+  {t:36,title:"D-Day Window",desc:"Allied cross-channel invasion of continental Europe becomes historically plausible."},
+  {t:48,title:"Atomic Age",desc:"Any nation that has completed atomic bomb research may now deploy the weapon."},
+  {t:60,title:"War Weariness",desc:"All nations lose 2 Political Capital. Populations around the world demand peace."},
+  {t:72,title:"War's End",desc:"August 1945. The war concludes. Final victory points are tallied."},
+];
+
+// Territory data: pos is {tabKey:[x%,y%], ...}
+const TER={
+  britain:{nm:"BRITAIN",r:{i:4,o:1,m:3},ow:"uk",adj:["france","low_countries","denmark_norway","atlantic"],p:{overview:[53,27],west_europe:[28,30]}},
+  france:{nm:"FRANCE",r:{i:3,o:0,m:3},ow:"france",adj:["britain","low_countries","w_germany","switzerland","n_italy","spain","morocco_algeria","atlantic"],p:{overview:[53,36],west_europe:[30,55]}},
+  low_countries:{nm:"LOW COUNTRIES",r:{i:2,o:0,m:1},ow:"france",adj:["britain","france","w_germany","denmark_norway"],p:{overview:[54,31],west_europe:[38,38]}},
+  w_germany:{nm:"W. GERMANY",r:{i:5,o:1,m:3},ow:"germany",adj:["low_countries","france","e_germany","czechoslovakia","austria","denmark_norway","switzerland"],p:{overview:[55,31],west_europe:[46,40]}},
+  e_germany:{nm:"E. GERMANY",r:{i:3,o:0,m:2},ow:"germany",adj:["w_germany","poland","czechoslovakia","denmark_norway","baltic_states"],p:{overview:[56,30],west_europe:[52,36],east_front:[18,28]}},
+  poland:{nm:"POLAND",r:{i:2,o:0,m:3},ow:"neutral",adj:["e_germany","czechoslovakia","baltic_states","w_ussr","ukraine","balkans"],p:{overview:[58,30],east_front:[28,32]}},
+  czechoslovakia:{nm:"CZECHOSLOVAKIA",r:{i:3,o:0,m:2},ow:"germany",adj:["w_germany","e_germany","poland","austria","balkans"],p:{overview:[56,33],east_front:[22,40]}},
+  austria:{nm:"AUSTRIA",r:{i:2,o:0,m:1},ow:"germany",adj:["w_germany","czechoslovakia","n_italy","balkans","switzerland"],p:{overview:[55,35],west_europe:[50,52]}},
+  denmark_norway:{nm:"SCANDINAVIA",r:{i:1,o:0,m:1},ow:"neutral",adj:["britain","low_countries","w_germany","e_germany","sweden","atlantic"],p:{overview:[54,22],west_europe:[42,18]}},
+  finland:{nm:"FINLAND",r:{i:1,o:0,m:1},ow:"neutral",adj:["sweden","baltic_states","w_ussr"],p:{overview:[58,17],east_front:[38,10]}},
+  sweden:{nm:"SWEDEN",r:{i:2,o:0,m:1},ow:"neutral_locked",adj:["denmark_norway","finland","baltic_states"],p:{overview:[56,19],west_europe:[50,14]}},
+  baltic_states:{nm:"BALTICS",r:{i:1,o:0,m:1},ow:"neutral",adj:["e_germany","poland","finland","sweden","w_ussr"],p:{overview:[58,25],east_front:[30,20]}},
+  balkans:{nm:"BALKANS",r:{i:2,o:1,m:3},ow:"neutral",adj:["poland","czechoslovakia","austria","n_italy","greece","ukraine","turkey"],p:{overview:[57,38],east_front:[25,55]}},
+  greece:{nm:"GREECE",r:{i:1,o:0,m:1},ow:"neutral",adj:["balkans","s_italy","turkey","libya","atlantic"],p:{overview:[57,42],east_front:[20,65]}},
+  n_italy:{nm:"N. ITALY",r:{i:3,o:0,m:2},ow:"italy",adj:["france","austria","balkans","s_italy","switzerland"],p:{overview:[54,37],west_europe:[42,58]}},
+  s_italy:{nm:"S. ITALY",r:{i:1,o:0,m:2},ow:"italy",adj:["n_italy","greece","tunisia","libya","atlantic"],p:{overview:[55,40],west_europe:[48,70]}},
+  spain:{nm:"SPAIN",r:{i:1,o:0,m:2},ow:"neutral_locked",adj:["france","morocco_algeria","atlantic"],p:{overview:[51,38],west_europe:[20,66]}},
+  switzerland:{nm:"SWISS",r:{i:1,o:0,m:0},ow:"neutral_locked",adj:["france","w_germany","austria","n_italy"],p:{overview:[54,34],west_europe:[40,50]}},
+  w_ussr:{nm:"W. USSR",r:{i:3,o:0,m:4},ow:"ussr",adj:["baltic_states","poland","ukraine","moscow","finland"],p:{overview:[61,25],east_front:[48,22]}},
+  ukraine:{nm:"UKRAINE",r:{i:3,o:0,m:3},ow:"ussr",adj:["poland","w_ussr","moscow","caucasus","balkans"],p:{overview:[60,34],east_front:[42,48]}},
+  moscow:{nm:"MOSCOW",r:{i:5,o:1,m:4},ow:"ussr",adj:["w_ussr","ukraine","caucasus","siberia"],p:{overview:[63,22],east_front:[58,16]}},
+  caucasus:{nm:"CAUCASUS",r:{i:2,o:4,m:2},ow:"ussr",adj:["ukraine","moscow","turkey","iraq_persia"],p:{overview:[63,36],east_front:[60,56]}},
+  siberia:{nm:"SIBERIA",r:{i:2,o:1,m:3},ow:"ussr",adj:["moscow","manchuria","mongolia"],p:{overview:[74,17],asia_pacific:[15,8]}},
+  morocco_algeria:{nm:"N.W. AFRICA",r:{i:0,o:0,m:1},ow:"france",adj:["france","spain","tunisia","atlantic"],p:{overview:[51,46],africa_mideast:[12,35]}},
+  tunisia:{nm:"TUNISIA",r:{i:0,o:0,m:1},ow:"france",adj:["morocco_algeria","libya","s_italy"],p:{overview:[54,44],africa_mideast:[28,25]}},
+  libya:{nm:"LIBYA",r:{i:0,o:1,m:1},ow:"italy",adj:["tunisia","egypt","greece","s_italy"],p:{overview:[57,47],africa_mideast:[40,35]}},
+  egypt:{nm:"EGYPT",r:{i:1,o:1,m:1},ow:"uk",adj:["libya","iraq_persia","atlantic"],p:{overview:[60,46],africa_mideast:[55,30]}},
+  iraq_persia:{nm:"IRAQ-PERSIA",r:{i:1,o:4,m:1},ow:"uk",adj:["egypt","turkey","caucasus","india"],p:{overview:[65,40],africa_mideast:[72,22]}},
+  turkey:{nm:"TURKEY",r:{i:1,o:0,m:2},ow:"neutral_locked",adj:["balkans","greece","caucasus","iraq_persia"],p:{overview:[60,38],africa_mideast:[55,15]}},
+  india:{nm:"INDIA",r:{i:2,o:0,m:4},ow:"uk",adj:["iraq_persia","se_asia","atlantic"],p:{overview:[73,50],asia_pacific:[18,50]}},
+  mongolia:{nm:"MONGOLIA",r:{i:0,o:0,m:1},ow:"neutral",adj:["siberia","manchuria","n_china"],p:{overview:[79,27],asia_pacific:[42,16]}},
+  manchuria:{nm:"MANCHURIA",r:{i:2,o:1,m:2},ow:"japan",adj:["siberia","mongolia","n_china","korea"],p:{overview:[84,27],asia_pacific:[56,16]}},
+  korea:{nm:"KOREA",r:{i:1,o:0,m:1},ow:"japan",adj:["manchuria","japan_home","pacific_islands"],p:{overview:[86,32],asia_pacific:[60,28]}},
+  n_china:{nm:"N. CHINA",r:{i:1,o:0,m:4},ow:"china",adj:["mongolia","manchuria","s_china"],p:{overview:[81,35],asia_pacific:[46,30]}},
+  s_china:{nm:"S. CHINA",r:{i:1,o:0,m:4},ow:"china",adj:["n_china","se_asia"],p:{overview:[80,46],asia_pacific:[42,46]}},
+  se_asia:{nm:"SE ASIA",r:{i:1,o:2,m:2},ow:"uk",adj:["india","s_china","dutch_east_indies","philippines"],p:{overview:[80,56],asia_pacific:[38,58]}},
+  dutch_east_indies:{nm:"D.E. INDIES",r:{i:1,o:4,m:1},ow:"neutral",adj:["se_asia","philippines","australia","pacific_islands"],p:{overview:[83,67],asia_pacific:[46,72]}},
+  philippines:{nm:"PHILIPPINES",r:{i:0,o:0,m:1},ow:"usa",adj:["se_asia","dutch_east_indies","japan_home","pacific_islands"],p:{overview:[86,52],asia_pacific:[54,48]}},
+  japan_home:{nm:"JAPAN",r:{i:5,o:0,m:3},ow:"japan",adj:["korea","philippines","pacific_islands","midway"],p:{overview:[88,30],asia_pacific:[65,24]}},
+  pacific_islands:{nm:"PACIFIC ISL.",r:{i:0,o:0,m:0},ow:"japan",adj:["dutch_east_indies","philippines","japan_home","midway","australia"],p:{overview:[92,56],asia_pacific:[76,52]}},
+  midway:{nm:"HAWAII",r:{i:1,o:1,m:1},ow:"usa",adj:["japan_home","pacific_islands","atlantic"],p:{overview:[14,40],asia_pacific:[92,30]}},
+  australia:{nm:"AUSTRALIA",r:{i:2,o:0,m:2},ow:"uk",adj:["dutch_east_indies","pacific_islands"],p:{overview:[88,78],asia_pacific:[68,82]}},
+  atlantic:{nm:"ATLANTIC",r:{i:0,o:0,m:0},ow:"uk",adj:["britain","france","denmark_norway","spain","morocco_algeria","egypt","india","midway","greece","s_italy"],p:{overview:[38,42],west_europe:[6,48]}},
+};
+
+const START_UNITS={
+  germany:{w_germany:[["infantry",4],["armor",2],["fighter",1]],e_germany:[["infantry",3],["armor",1]]},
+  uk:{britain:[["infantry",3],["fighter",2],["fleet",2]],egypt:[["infantry",1]],india:[["infantry",1]],atlantic:[["fleet",2],["sub",1]]},
+  ussr:{w_ussr:[["infantry",4]],ukraine:[["infantry",3]],moscow:[["infantry",3],["armor",1],["fighter",1]],siberia:[["infantry",2]]},
+  usa:{midway:[["fleet",2],["fighter",1]],philippines:[["infantry",1]]},
+  japan:{japan_home:[["infantry",3],["fleet",3],["fighter",2]],manchuria:[["infantry",2],["armor",1]],pacific_islands:[["fleet",1]]},
+  italy:{n_italy:[["infantry",2],["fighter",1]],s_italy:[["infantry",1]],libya:[["infantry",2],["armor",1]]},
+  france:{france:[["infantry",4],["armor",1],["fighter",1]],morocco_algeria:[["infantry",1]]},
+  china:{n_china:[["infantry",4]],s_china:[["infantry",3]]},
+};
+
+const MO=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const gd=(t)=>`${MO[(t-1+8)%12]} ${1939+Math.floor((t-1+8)/12)}`;
+const STEPS=["briefing","resources","research","build","move","diplomacy","summary"];
+const STEP_NM={briefing:"Nation Briefing",resources:"Resources Collected",research:"Research Decision",build:"Build Units",move:"Move Forces",diplomacy:"Diplomacy",summary:"Turn Summary"};
+const NAT_TAB={germany:"west_europe",uk:"west_europe",ussr:"east_front",usa:"asia_pacific",japan:"asia_pacific",italy:"west_europe",france:"west_europe",china:"asia_pacific"};
+
+// AI build priorities
+const AI_BUILD={germany:["armor","infantry","fighter"],uk:["fleet","fighter","infantry"],ussr:["infantry","infantry","armor"],usa:["fleet","fighter","armor"],japan:["fleet","fighter","infantry"],italy:["infantry","fighter"],france:["infantry","fighter"],china:["infantry","infantry"]};
+const AI_RES_PRIO={germany:["land","secret"],uk:["intel","naval"],ussr:["logistics","land"],usa:["logistics","secret"],japan:["naval","land"],italy:["naval","logistics"],france:["intel","land"],china:["land","logistics"]};
+
+// Palette
+const C={bg:"#0c1018",pn:"#131a24",bd:"#2a3a52",tx:"#eef1f5",dm:"#8899aa",br:"#ffffff",gd:"#f5c842",gk:"#c4a030",rd:"#ff4444",gn:"#44ee77",bl:"#448aff"};
+
+// ══════════════════ SAVE HELPERS ══════════════════
+const SAVE_KEY="tow_saves";
+function loadAllSaves(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||"{}") }catch{return{}}}
+function saveToSlot(id,data){const all=loadAllSaves();all[id]=data;localStorage.setItem(SAVE_KEY,JSON.stringify(all))}
+function loadSlot(id){return loadAllSaves()[id]||null}
+function deleteSlot(id){const all=loadAllSaves();delete all[id];localStorage.setItem(SAVE_KEY,JSON.stringify(all))}
+function listSaves(){const all=loadAllSaves();return Object.entries(all).map(([id,d])=>({id,name:d.name,turn:d.turn,date:d.date,ts:d.ts}))}
+
+// ══════════════════ MAIN COMPONENT ══════════════════
+function Game(){
+  const[screen,setScreen]=useState("saves");
+  const[saves,setSaves]=useState([]);
+  const[slotId,setSlotId]=useState(null);
+  const[slotName,setSlotName]=useState("");
+  const[newName,setNewName]=useState("");
+  // Nation control
+  const[nc,setNc]=useState(()=>{const c={};NO.forEach(n=>{c[n]="human"});return c});
+  // Core game state
+  const[turn,setTurn]=useState(1);
+  const[tab,setTab]=useState("overview");
+  const[sel,setSel]=useState(null);
+  const[terrs,setTerrs]=useState({});
+  const[nd,setNd]=useState({});
+  const[log,setLog]=useState([]);
+  // Wizard
+  const[ws,setWs]=useState("briefing");
+  const[cni,setCni]=useState(0);
+  const[tp,setTp]=useState("nations"); // nations|combat|done
+  const[cq,setCq]=useState([]);
+  const[combatRes,setCombatRes]=useState(null);
+  const[ev,setEv]=useState(null);
+  const[mf,setMf]=useState(null); // moveFrom
+  const[ts,setTs]=useState({}); // turn summaries per nation
+  const[aiText,setAiText]=useState(null);
+
+  const cn=NO[cni]; const isAI=nc[cn]==="ai";
+  const an=nd[cn]; const st=sel?terrs[sel]:null;
+  const addLog=useCallback((m)=>setLog(p=>[...p.slice(-35),{turn,msg:m}]),[turn]);
+
+  useEffect(()=>{setSaves(listSaves())},[screen==="saves"]);
+
+  // ──── INIT GAME ────
+  function initGame(){
+    const t={};
+    Object.entries(TER).forEach(([id,d])=>{t[id]={...d,units:[]}});
+    Object.entries(START_UNITS).forEach(([nat,locs])=>{
+      Object.entries(locs).forEach(([loc,us])=>{
+        if(t[loc])t[loc].units=us.map(([type,count])=>({type,count,nation:nat}));
+      });
+    });
+    const n={};
+    Object.entries(NAT).forEach(([id,x])=>{
+      n[id]={res:{i:x.sr.i,o:x.sr.o,m:x.sr.m,p:x.sr.p},rp:{},ct:[],vp:0,iso:id==="usa",bk:{}};
+    });
+    setTerrs(t);setNd(n);setTurn(1);setCni(0);setWs("briefing");setTp("nations");
+    setLog([{turn:1,msg:"━━ Turn 1: Sep 1939 ━━"}]);setCq([]);setTs({});setMf(null);
+    setSel(null);setTab(NAT_TAB[NO[0]]);
+    const e=EVENTS.find(x=>x.t===1);if(e)setEv(e);
+    setScreen("game");
+  }
+
+  // ──── RESOURCE COLLECTION ────
+  function collectFor(nId){
+    let ii=0,oo=0,mm=0;
+    Object.entries(terrs).forEach(([,t])=>{if(t.ow===nId){ii+=t.r.i;oo+=t.r.o;mm+=t.r.m}});
+    const n=nd[nId];
+    if(n.ct.includes("sf"))oo+=2;
+    if(n.ct.includes("we"))ii+=3;
+    if(nId==="usa"&&!n.iso)ii+=4;
+    if(nId==="japan"&&!Object.values(terrs).some(t=>t.ow==="japan"&&t.r.o>=2))oo-=2;
+    return{i:ii,o:Math.max(0,oo),m:mm,p:1};
+  }
+  function applyResources(nId){
+    const g=collectFor(nId);
+    setNd(p=>{const n={...p,[nId]:{...p[nId],res:{...p[nId].res}}};
+      n[nId].res.i+=g.i;n[nId].res.o+=g.o;n[nId].res.m+=g.m;n[nId].res.p+=g.p;
+      Object.keys(n[nId].res).forEach(k=>{if(n[nId].res[k]<0)n[nId].res[k]=0});
+      return n;
+    });
+    return g;
+  }
+
+  // ──── BUILD ────
+  function handleBuild(uType,tId){
+    const cost=UNITS[uType].cost;const n=nd[cn];
+    const disc=n.ct.includes("mp")?1:0;
+    if(!Object.entries(cost).every(([r,a])=>(n.res[r]||0)>=(r==="i"?Math.max(1,a-disc):a)))return;
+    setNd(p=>{const nn={...p,[cn]:{...p[cn],res:{...p[cn].res}}};Object.entries(cost).forEach(([r,a])=>{nn[cn].res[r]-=(r==="i"?Math.max(1,a-disc):a)});return nn});
+    setTerrs(p=>{const t={...p,[tId]:{...p[tId],units:[...p[tId].units]}};const ex=t[tId].units.find(u=>u.type===uType&&u.nation===cn);if(ex)t[tId].units=t[tId].units.map(u=>u.type===uType&&u.nation===cn?{...u,count:u.count+1}:u);else t[tId].units.push({type:uType,nation:cn,count:1});return t});
+    setTs(p=>({...p,[cn]:{...(p[cn]||{}),built:[...((p[cn]||{}).built||[]),`${UNITS[uType].nm} → ${TER[tId].nm}`]}}));
+    addLog(`🔨 ${NAT[cn].nm}: +1 ${UNITS[uType].nm} in ${TER[tId].nm}`);
+  }
+
+  // ──── MOVE ────
+  function handleMove(fromId,toId,uType,count){
+    if(nd[cn].iso&&cn==="usa"){addLog("❌ USA is isolationist");return}
+    if(!TER[fromId].adj.includes(toId)){
+      if(nd[cn].ct.includes("sl")&&TER[fromId].adj.some(m=>TER[m]?.adj?.includes(toId))){}
+      else{addLog("❌ Not adjacent");return}
+    }
+    if(["armor","fighter","bomber","fleet","sub"].includes(uType)){
+      if((nd[cn].res.o||0)<count){addLog("❌ Not enough oil");return}
+      setNd(p=>({...p,[cn]:{...p[cn],res:{...p[cn].res,o:p[cn].res.o-count}}}));
+    }
+    setTerrs(p=>{const t={...p};
+      t[fromId]={...t[fromId],units:t[fromId].units.map(u=>u.type===uType&&u.nation===cn?{...u,count:u.count-count}:u).filter(u=>u.count>0)};
+      t[toId]={...t[toId],units:[...t[toId].units]};
+      const ex=t[toId].units.find(u=>u.type===uType&&u.nation===cn);
+      if(ex)t[toId].units=t[toId].units.map(u=>u.type===uType&&u.nation===cn?{...u,count:u.count+count}:u);
+      else t[toId].units.push({type:uType,nation:cn,count});
+      return t});
+    setTs(p=>({...p,[cn]:{...(p[cn]||{}),moved:[...((p[cn]||{}).moved||[]),`${count}× ${UNITS[uType].nm} → ${TER[toId].nm}`]}}));
+    addLog(`➡️ ${NAT[cn].nm}: ${count}× ${UNITS[uType].nm} → ${TER[toId].nm}`);
+    setMf(null);
+  }
+
+  // ──── RESEARCH ────
+  function doResearch(bid,techId){
+    const tech=RES[bid].t.find(t=>t.id===techId);if(!tech)return;
+    const n=nd[cn];if(n.ct.includes(techId))return;
+    if(tech.rq&&!n.ct.includes(tech.rq)){addLog("❌ Prerequisite not met");return}
+    if(n.res.i<2){addLog("❌ Need 2 Industry");return}
+    const bonus=NAT[cn].rb?.[bid]||0;
+    const progress=(n.rp[techId]||0)+1+bonus;
+    const done=progress>=tech.c;
+    setNd(p=>{const nn={...p,[cn]:{...p[cn],res:{...p[cn].res},rp:{...p[cn].rp},ct:[...p[cn].ct]}};
+      nn[cn].res.i-=2;
+      if(done){nn[cn].ct.push(techId);delete nn[cn].rp[techId]}
+      else nn[cn].rp[techId]=progress;
+      return nn});
+    setTs(p=>({...p,[cn]:{...(p[cn]||{}),research:done?`${tech.nm} COMPLETE!`:`${tech.nm} ${progress}/${tech.c}`}}));
+    addLog(`🔬 ${NAT[cn].nm}: ${tech.nm} ${done?"COMPLETE!":progress+"/"+tech.c}`);
+  }
+
+  // ──── COMBAT ────
+  function resolveCombat(tId){
+    const terr=terrs[tId];const groups={};
+    terr.units.forEach(u=>{if(!groups[u.nation])groups[u.nation]=[];groups[u.nation].push(u)});
+    const nats=Object.keys(groups);if(nats.length<2)return;
+    const atk=nats.find(n=>n!==terr.ow)||nats[0];
+    const def=(terr.ow!=="neutral"&&terr.ow!=="neutral_locked")?terr.ow:nats.find(n=>n!==atk);
+    if(!def||!atk)return;
+    const calcStr=(units,isDef,nat)=>{
+      let s=0;units.forEach(u=>{s+=(isDef?UNITS[u.type].d:UNITS[u.type].a)*u.count});
+      const n=nd[nat];
+      if(!isDef&&nat==="germany"&&!n.bk[tId])s+=2;
+      if(isDef&&nat==="france"&&tId==="france")s+=3;
+      if(isDef&&nat==="china"&&["n_china","s_china"].includes(tId))s+=2;
+      if(isDef&&nat==="japan"&&tId==="japan_home")s+=1;
+      if(nat==="ussr"&&turn<12)s-=2;
+      if(n.ct.includes("ca")&&units.some(u=>u.type==="infantry")&&units.some(u=>u.type==="armor")&&!isDef)
+        s+=units.filter(u=>u.type==="infantry").reduce((a,u)=>a+u.count,0);
+      if(n.ct.includes("aa"))s+=units.filter(u=>u.type==="armor").reduce((a,u)=>a+u.count,0);
+      if(n.ct.includes("as")&&units.some(u=>u.type==="fighter"))s+=1;
+      return Math.max(0,s);
+    };
+    const aStr=calcStr(groups[atk]||[],false,atk);
+    const dStr=calcStr(groups[def]||[],true,def);
+    const aRoll=aStr+Math.floor(Math.random()*6)+1;
+    const dRoll=dStr+Math.floor(Math.random()*6)+1;
+    const aw=aRoll>dRoll;
+    setTerrs(p=>{const t={...p,[tId]:{...p[tId],units:[...p[tId].units]}};
+      const loser=aw?def:atk;
+      t[tId].units=t[tId].units.map(u=>
+        u.nation===loser?{...u,count:Math.max(0,u.count-Math.max(1,Math.ceil(u.count*(0.5+Math.random()*0.2))))}
+        :{...u,count:Math.max(1,u.count-Math.ceil(u.count*(0.2+Math.random()*0.1)))}
+      ).filter(u=>u.count>0);
+      if(aw){t[tId].ow=atk;t[tId].units=t[tId].units.filter(u=>u.nation!==def)}
+      else t[tId].units=t[tId].units.filter(u=>u.nation!==atk);
+      return t});
+    if(atk==="germany")setNd(p=>({...p,germany:{...p.germany,bk:{...p.germany.bk,[tId]:true}}}));
+    if(aw)setNd(p=>({...p,[atk]:{...p[atk],vp:(p[atk].vp||0)+2},[def]:{...p[def],vp:Math.max(0,(p[def].vp||0)-1)}}));
+    setCombatRes({ter:TER[tId].nm,atk:NAT[atk].nm,def:NAT[def].nm,aStr,dStr,aRoll,dRoll,winner:aw?NAT[atk].nm:NAT[def].nm});
+    addLog(`⚔️ ${TER[tId].nm}: ${aw?NAT[atk].nm:NAT[def].nm} WINS! (${aRoll} vs ${dRoll})`);
+  }
+
+  // ──── AI RESOLVE ────
+  function resolveAI(){
+    const nId=cn;
+    const g=applyResources(nId);const n=nd[nId];const summary=[];
+    // AI Research
+    const prios=AI_RES_PRIO[nId]||["land"];
+    let researched=false;
+    if(n.res.i>=2){
+      for(const bid of prios){
+        const tech=RES[bid]?.t.find(t=>!n.ct.includes(t.id)&&(!t.rq||n.ct.includes(t.rq)));
+        if(tech){
+          const bonus=NAT[nId].rb?.[bid]||0;
+          const prog=(n.rp[tech.id]||0)+1+bonus;
+          const done=prog>=tech.c;
+          setNd(p=>{const nn={...p,[nId]:{...p[nId],res:{...p[nId].res},rp:{...p[nId].rp},ct:[...p[nId].ct]}};
+            nn[nId].res.i-=2;
+            if(done){nn[nId].ct.push(tech.id);delete nn[nId].rp[tech.id]}
+            else nn[nId].rp[tech.id]=prog;
+            return nn});
+          summary.push(done?`Completed ${tech.nm}!`:`Researching ${tech.nm} (${prog}/${tech.c})`);
+          researched=true;break;
+        }
+      }
+    }
+    // AI Build
+    const myTerrs=Object.entries(terrs).filter(([,t])=>t.ow===nId);
+    const bpList=AI_BUILD[nId]||["infantry"];
+    let res={...nd[nId].res};if(researched)res.i-=2;
+    for(const uType of bpList){
+      const cost=UNITS[uType].cost;
+      if(Object.entries(cost).every(([r,a])=>(res[r]||0)>=a)&&myTerrs.length>0){
+        const bIn=myTerrs[0][0];
+        setTerrs(p=>{const t={...p,[bIn]:{...p[bIn],units:[...p[bIn].units]}};
+          const ex=t[bIn].units.find(u=>u.type===uType&&u.nation===nId);
+          if(ex)t[bIn].units=t[bIn].units.map(u=>u.type===uType&&u.nation===nId?{...u,count:u.count+1}:u);
+          else t[bIn].units.push({type:uType,nation:nId,count:1});
+          return t});
+        setNd(p=>{const nn={...p,[nId]:{...p[nId],res:{...p[nId].res}}};
+          Object.entries(cost).forEach(([r,a])=>{nn[nId].res[r]-=a});return nn});
+        Object.entries(cost).forEach(([r,a])=>{res[r]-=a});
+        summary.push(`Built ${UNITS[uType].nm} in ${TER[myTerrs[0][0]].nm}`);
+      }
+    }
+    if(summary.length===0)summary.push("No major actions this turn");
+    setAiText(summary.join(". ")+".");
+    addLog(`🤖 ${NAT[nId].nm} (AI): ${summary.join(". ")}`);
+  }
+
+  // ──── WIZARD NAV ────
+  function wizNext(){
+    const si=STEPS.indexOf(ws);
+    if(ws==="briefing"){applyResources(cn);setTs(p=>({...p,[cn]:{...(p[cn]||{}),resources:collectFor(cn)}}));setWs("resources")}
+    else if(si<STEPS.length-1){setWs(STEPS[si+1]);setMf(null);setSel(null)}
+    else nextNation();
+  }
+  function nextNation(){
+    const nx=cni+1;
+    if(nx>=NO.length){
+      const contested=Object.entries(terrs).filter(([,t])=>new Set(t.units.map(u=>u.nation)).size>1).map(([id])=>id);
+      setCq(contested);setTp(contested.length>0?"combat":"done");
+    }else{
+      setCni(nx);setWs("briefing");setMf(null);setSel(null);setAiText(null);
+      setTab(NAT_TAB[NO[nx]]||"overview");
+    }
+  }
+  function advanceTurn(){
+    const nt=turn+1;if(nt>72){addLog("🏁 THE WAR IS OVER!");return}
+    setTurn(nt);setCni(0);setWs("briefing");setTp("nations");setCq([]);setTs({});setMf(null);setSel(null);setAiText(null);
+    setTab(NAT_TAB[NO[0]]||"overview");
+    addLog(`━━ Turn ${nt}: ${gd(nt)} ━━`);
+    const e=EVENTS.find(x=>x.t===nt);if(e)setEv(e);
+    // Auto-save
+    if(slotId)saveToSlot(slotId,{name:slotName,turn:nt,date:gd(nt),ts:Date.now(),terrs,nd,nc,log,turn:nt});
+  }
+
+  const contested=useMemo(()=>Object.entries(terrs).filter(([,t])=>new Set(t.units.map(u=>u.nation)).size>1).map(([id])=>id),[terrs]);
+  const calcVP=(nId)=>{let vp=nd[nId]?.vp||0;Object.values(terrs).forEach(t=>{if(t.ow===nId)vp+=(t.r.i>2?2:1)});return vp};
+  const visTerrs=useMemo(()=>Object.keys(TER).filter(id=>TER[id].p[tab]),[tab]);
+
+  function manualSave(){
+    if(!slotId)return;
+    saveToSlot(slotId,{name:slotName,turn,date:gd(turn),ts:Date.now(),terrs,nd,nc,log});
+    addLog("💾 Game saved!");
+  }
+
+  // ══════════════════ RENDER: SAVES ══════════════════
+  if(screen==="saves"){
+    return(<div style={{width:"100%",height:"100vh",background:`radial-gradient(ellipse at 50% 40%,#1a2d44,${C.bg})`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24}}>
+      <div style={{fontSize:64,fontWeight:700,color:C.gd,fontFamily:"Georgia,serif",letterSpacing:4}}>THEATER OF WAR</div>
+      <div style={{fontSize:22,color:C.dm}}>World War II Grand Strategy for the Classroom</div>
+      <div style={{background:C.pn,border:`2px solid ${C.bd}`,borderRadius:16,padding:32,minWidth:500,maxWidth:650}}>
+        <div style={{fontSize:20,fontWeight:700,color:C.gd,marginBottom:16,letterSpacing:2}}>SAVED GAMES</div>
+        {saves.length===0&&<div style={{color:C.dm,fontSize:18,padding:"20px 0"}}>No saved games yet.</div>}
+        {saves.map(s=>(
+          <div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",background:"#172030",borderRadius:10,marginBottom:8,border:`1px solid ${C.bd}`}}>
+            <div><div style={{fontSize:19,fontWeight:700,color:C.br}}>{s.name}</div>
+              <div style={{fontSize:15,color:C.dm}}>Turn {s.turn} — {s.date}</div></div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{const d=loadSlot(s.id);if(d){setSlotId(s.id);setSlotName(d.name);setTurn(d.turn);setTerrs(d.terrs);setNd(d.nd);setNc(d.nc);setLog(d.log||[]);setCni(0);setWs("briefing");setTp("nations");setCq([]);setTs({});setScreen("game")}}} style={{padding:"8px 20px",background:C.gd+"22",color:C.gd,border:`2px solid ${C.gd}`,borderRadius:8,fontSize:17,fontWeight:700}}>LOAD</button>
+              <button onClick={()=>{deleteSlot(s.id);setSaves(listSaves())}} style={{padding:"8px 14px",background:C.rd+"22",color:C.rd,border:`2px solid ${C.rd}`,borderRadius:8,fontSize:15,fontWeight:700}}>✕</button>
+            </div></div>
+        ))}
+        <div style={{marginTop:20,borderTop:`1px solid ${C.bd}`,paddingTop:20}}>
+          <div style={{fontSize:18,fontWeight:700,color:C.br,marginBottom:10}}>NEW GAME</div>
+          <div style={{display:"flex",gap:10}}>
+            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Class name (e.g. 3rd Period)" style={{flex:1,padding:"10px 14px",background:"#172030",color:C.tx,border:`2px solid ${C.bd}`,borderRadius:8,fontSize:17,outline:"none"}}/>
+            <button onClick={()=>{if(newName.trim()){const id="s"+Date.now();setSlotId(id);setSlotName(newName.trim());setNewName("");setScreen("setup")}}} disabled={!newName.trim()} style={{padding:"10px 24px",background:newName.trim()?`linear-gradient(135deg,${C.gd},${C.gk})`:"#333",color:"#0c1018",fontWeight:900,fontSize:17,border:"none",borderRadius:8}}>CREATE</button>
+          </div></div>
+      </div>
+    </div>);
+  }
+
+  // ══════════════════ RENDER: SETUP ══════════════════
+  if(screen==="setup"){
+    return(<div style={{width:"100%",height:"100vh",background:`radial-gradient(ellipse at 50% 40%,#1a2d44,${C.bg})`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24}}>
+      <div style={{fontSize:48,fontWeight:700,color:C.gd,fontFamily:"Georgia,serif",letterSpacing:3}}>ASSIGN NATIONS</div>
+      <div style={{fontSize:20,color:C.dm}}>{slotName} — Click to toggle Student vs AI</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+        {NO.map(nId=>{const n=NAT[nId];const isH=nc[nId]==="human";return(
+          <div key={nId} onClick={()=>setNc(p=>({...p,[nId]:isH?"ai":"human"}))} style={{padding:"20px 24px",background:n.col+"44",border:`3px solid ${isH?n.acc:C.rd+"88"}`,borderRadius:12,cursor:"pointer",textAlign:"center",minWidth:155,transition:"all 0.15s"}}>
+            <div style={{fontSize:36}}>{n.fl}</div>
+            <div style={{fontWeight:700,color:n.acc,fontSize:20,marginTop:4}}>{n.nm}</div>
+            <div style={{marginTop:8,padding:"4px 12px",borderRadius:6,fontSize:16,fontWeight:800,background:isH?C.gn+"22":C.rd+"22",color:isH?C.gn:C.rd,border:`2px solid ${isH?C.gn:C.rd}`}}>{isH?"👤 STUDENT":"🤖 AI"}</div>
+            <div style={{fontSize:12,color:C.dm,marginTop:4}}>{n.sp}</div>
+          </div>);
+        })}
+      </div>
+      <button onClick={initGame} style={{padding:"18px 60px",background:`linear-gradient(135deg,${C.gd},${C.gk})`,color:"#0c1018",fontWeight:900,fontSize:24,border:"none",borderRadius:10,letterSpacing:3,fontFamily:"Georgia,serif"}}>START THE WAR</button>
+    </div>);
+  }
+
+  // ══════════════════ RENDER: GAME ══════════════════
+  const natInfo=NAT[cn]||{};const natData=nd[cn]||{res:{}};
+
+  // Wizard panel renderer
+  const wizPanel=()=>{
+    // ── AI turn ──
+    if(tp==="nations"&&isAI){
+      if(!aiText){setTimeout(()=>resolveAI(),400);
+        return <div style={{textAlign:"center",padding:30}}>
+          <div style={{fontSize:48}}>{natInfo.fl}</div>
+          <div style={{fontSize:28,fontWeight:800,color:natInfo.acc,margin:"12px 0"}}>{natInfo.nm}</div>
+          <div style={{fontSize:22,color:C.rd,fontWeight:700}}>🤖 AI RESOLVING...</div>
+        </div>;
+      }
+      return <div style={{textAlign:"center",padding:30}}>
+        <div style={{fontSize:48}}>{natInfo.fl}</div>
+        <div style={{fontSize:26,fontWeight:800,color:natInfo.acc,margin:"10px 0"}}>{natInfo.nm} <span style={{color:C.rd,fontSize:18}}>(AI)</span></div>
+        <div style={{fontSize:18,color:C.tx,lineHeight:1.7,margin:"16px 0",textAlign:"left",background:"#172030",padding:16,borderRadius:10}}>{aiText}</div>
+        <button onClick={()=>{setAiText(null);nextNation()}} style={btnGold}>NEXT NATION ▶</button>
+      </div>;
+    }
+    // ── Combat phase ──
+    if(tp==="combat"){
+      if(cq.length===0)return <div style={{textAlign:"center",padding:30}}>
+        <div style={{fontSize:24,fontWeight:800,color:C.gn,marginBottom:16}}>✅ ALL BATTLES RESOLVED</div>
+        <button onClick={advanceTurn} style={btnGold}>ADVANCE TO {gd(turn+1)} ▶</button>
+      </div>;
+      return <div style={{padding:20}}>
+        <div style={{fontSize:22,fontWeight:800,color:C.rd,marginBottom:12,letterSpacing:2}}>⚔️ COMBAT RESOLUTION</div>
+        <div style={{fontSize:17,color:C.dm,marginBottom:14}}>{cq.length} battle{cq.length>1?"s":""} to resolve.</div>
+        {cq.map(tId=><button key={tId} onClick={()=>{resolveCombat(tId);setCq(p=>p.filter(x=>x!==tId))}} style={{display:"block",width:"100%",padding:"14px 18px",background:C.rd+"22",color:C.rd,border:`2px solid ${C.rd}`,borderRadius:8,fontSize:19,marginBottom:8,fontWeight:800}}>⚔️ BATTLE OF {TER[tId].nm}</button>)}
+      </div>;
+    }
+    // ── Turn done ──
+    if(tp==="done"){
+      return <div style={{textAlign:"center",padding:30}}>
+        <div style={{fontSize:24,fontWeight:800,color:C.gn,marginBottom:16}}>✅ TURN {turn} COMPLETE</div>
+        <div style={{fontSize:17,color:C.dm,marginBottom:20}}>All nations have acted. No battles to resolve.</div>
+        <button onClick={advanceTurn} style={btnGold}>ADVANCE TO {gd(turn+1)} ▶</button>
+      </div>;
+    }
+    // ── Human wizard steps ──
+    if(tp!=="nations")return null;
+    const si=STEPS.indexOf(ws)+1;
+    const n=natInfo;const d=natData;
+    return <div style={{padding:20}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+        <span style={{fontSize:40}}>{n.fl}</span>
+        <div><div style={{fontSize:24,fontWeight:800,color:n.acc}}>{n.nm}</div>
+          <div style={{fontSize:15,color:C.dm}}>Step {si}/{STEPS.length}: {STEP_NM[ws]}</div></div>
+      </div>
+      {/* Progress bar */}
+      <div style={{display:"flex",gap:3,marginBottom:18}}>
+        {STEPS.map((_,i)=><div key={i} style={{flex:1,height:6,borderRadius:3,background:i<si?n.acc:C.bd}}/>)}
+      </div>
+
+      {/* BRIEFING */}
+      {ws==="briefing"&&<div>
+        <div style={{background:"#172030",borderRadius:10,padding:18,marginBottom:14}}>
+          <div style={{fontSize:18,color:C.br,fontWeight:700,marginBottom:8}}>Current Status</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,fontSize:18}}>
+            <span style={{color:"#77ccff"}}>🏭 Industry: <b>{d.res.i}</b></span>
+            <span style={{color:"#ffaa33"}}>🛢️ Oil: <b>{d.res.o}</b></span>
+            <span style={{color:"#bbccdd"}}>👥 Manpower: <b>{d.res.m}</b></span>
+            <span style={{color:C.gd}}>🏛️ Pol. Capital: <b>{d.res.p}</b></span>
+          </div>
+          <div style={{marginTop:10,fontSize:17,color:C.gd,fontWeight:700}}>🏆 Victory Points: {calcVP(cn)}</div>
+          <div style={{marginTop:6,fontSize:15,color:C.dm}}>Territories: {Object.values(terrs).filter(t=>t.ow===cn).length}</div>
+          {cn==="usa"&&d.iso&&<div style={{color:C.rd,fontSize:16,fontWeight:800,marginTop:8}}>🔒 ISOLATIONIST — Cannot deploy military abroad</div>}
+          {cn==="ussr"&&turn<12&&<div style={{color:C.rd,fontSize:16,fontWeight:800,marginTop:8}}>☠️ PURGE PENALTY — −2 to all combat rolls</div>}
+        </div>
+        <div style={{fontSize:15,color:n.acc,fontStyle:"italic",marginBottom:12}}>★ {n.sp}</div>
+        <button onClick={wizNext} style={btnGold}>COLLECT RESOURCES ▶</button>
+      </div>}
+
+      {/* RESOURCES */}
+      {ws==="resources"&&<div>
+        <div style={{background:"#172030",borderRadius:10,padding:18,marginBottom:14}}>
+          <div style={{fontSize:18,color:C.gn,fontWeight:700,marginBottom:10}}>Resources Collected:</div>
+          {ts[cn]?.resources&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:18}}>
+            <span style={{color:"#77ccff"}}>🏭 +{ts[cn].resources.i} Industry</span>
+            <span style={{color:"#ffaa33"}}>🛢️ +{ts[cn].resources.o} Oil</span>
+            <span style={{color:"#bbccdd"}}>👥 +{ts[cn].resources.m} Manpower</span>
+            <span style={{color:C.gd}}>🏛️ +{ts[cn].resources.p} Pol. Capital</span>
+          </div>}
+          <div style={{marginTop:12,borderTop:`1px solid ${C.bd}`,paddingTop:10,fontSize:17,color:C.br,fontWeight:700}}>
+            Totals: 🏭{d.res.i} 🛢️{d.res.o} 👥{d.res.m} 🏛️{d.res.p}
+          </div>
+        </div>
+        <button onClick={wizNext} style={btnGold}>RESEARCH DECISION ▶</button>
+      </div>}
+
+      {/* RESEARCH */}
+      {ws==="research"&&<div>
+        <div style={{fontSize:16,color:C.dm,marginBottom:10}}>Invest 2 Industry in a technology, or skip. Available: 🏭{d.res.i}</div>
+        <div style={{maxHeight:300,overflow:"auto"}}>
+        {Object.entries(RES).map(([bid,br])=><div key={bid} style={{marginBottom:10}}>
+          <div style={{fontSize:16,color:C.gd,fontWeight:700}}>{br.ic} {br.nm}{NAT[cn].rb?.[bid]?<span style={{color:C.gn}}> (+{NAT[cn].rb[bid]})</span>:""}</div>
+          {br.t.map(tech=>{
+            const done=d.ct.includes(tech.id);const prog=d.rp[tech.id]||0;const locked=tech.rq&&!d.ct.includes(tech.rq);
+            return <div key={tech.id} style={{padding:"6px 10px",marginBottom:4,background:done?C.gn+"10":"#0c1018",border:`1px solid ${done?C.gn+"55":C.bd}`,borderRadius:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:15,color:done?C.gn:locked?"#445":"#fff",fontWeight:600}}>{done?"✅":locked?"🔒":"○"} {tech.nm} <span style={{color:C.dm,fontSize:12}}>{tech.ef}</span></span>
+              {!done&&!locked&&<button onClick={()=>{doResearch(bid,tech.id);wizNext()}} disabled={d.res.i<2} style={{padding:"4px 12px",background:"#172030",color:"#bb88ff",border:"1px solid #bb88ff",borderRadius:5,fontSize:13,fontWeight:700}}>{prog}/{tech.c}</button>}
+            </div>})}
+        </div>)}
+        </div>
+        <button onClick={wizNext} style={btnDim}>SKIP RESEARCH ▶</button>
+      </div>}
+
+      {/* BUILD */}
+      {ws==="build"&&<div>
+        <div style={{fontSize:16,color:C.dm,marginBottom:10}}>Select one of your territories on the map, then build units there.</div>
+        {sel&&st&&st.ow===cn?<div>
+          <div style={{fontSize:18,fontWeight:700,color:C.br,marginBottom:10}}>Build in {st.nm}:</div>
+          {Object.entries(UNITS).map(([uid,u])=>{
+            const disc=d.ct.includes("mp")?1:0;
+            const ok=Object.entries(u.cost).every(([r,a])=>(d.res[r]||0)>=(r==="i"?Math.max(1,a-disc):a));
+            return <button key={uid} onClick={()=>handleBuild(uid,sel)} disabled={!ok} style={{display:"flex",justifyContent:"space-between",width:"100%",padding:"10px 14px",marginBottom:5,background:ok?"#172030":C.pn,color:ok?"#fff":"#445",border:`2px solid ${ok?"#77ccff44":C.bd}`,borderRadius:7,fontSize:16,fontWeight:700}}>
+              <span>{u.ic} {u.nm}</span>
+              <span style={{fontSize:12,color:C.dm}}>{Object.entries(u.cost).map(([r,a])=>{const labels={i:"ind",o:"oil",m:"man"};return`${labels[r]||r}:${r==="i"?Math.max(1,a-disc):a}`}).join(" ")}</span>
+            </button>})}
+        </div>:<div style={{color:C.gd,fontSize:17,padding:14,background:"#172030",borderRadius:8}}>👉 Click one of your territories on the map</div>}
+        <button onClick={wizNext} style={{...btnDim,marginTop:12}}>DONE BUILDING ▶</button>
+      </div>}
+
+      {/* MOVE */}
+      {ws==="move"&&<div>
+        <div style={{fontSize:16,color:C.dm,marginBottom:10}}>Click origin territory (your forces), then click adjacent destination.</div>
+        {!mf&&<div style={{color:C.gd,fontSize:17,padding:14,background:"#172030",borderRadius:8,marginBottom:10}}>👉 Click a territory with your forces</div>}
+        {mf&&<div style={{background:"#172030",borderRadius:8,padding:14,marginBottom:10}}>
+          <div style={{fontSize:17,color:C.gn,fontWeight:700,marginBottom:8}}>From: {TER[mf].nm}</div>
+          {sel&&sel!==mf&&TER[mf].adj.includes(sel)?<div>
+            <div style={{fontSize:16,color:C.br,marginBottom:8}}>→ To: {TER[sel].nm}</div>
+            {terrs[mf].units.filter(u=>u.nation===cn).map((u,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <span style={{fontSize:16,fontWeight:700}}>{UNITS[u.type].ic} {UNITS[u.type].nm} ×{u.count}</span>
+              <div style={{display:"flex",gap:4}}>
+                {Array.from({length:Math.min(u.count,5)},(_,n)=>n+1).map(c=><button key={c} onClick={()=>handleMove(mf,sel,u.type,c)} style={{padding:"4px 10px",background:"#172030",color:C.gn,border:`2px solid ${C.gn}`,borderRadius:5,fontSize:15,fontWeight:800}}>{c}</button>)}
+              </div>
+            </div>)}
+          </div>:<div style={{color:C.dm,fontSize:15}}>Click an adjacent territory as destination</div>}
+          <button onClick={()=>setMf(null)} style={{marginTop:8,padding:"5px 14px",background:C.rd+"22",color:C.rd,border:`1px solid ${C.rd}`,borderRadius:6,fontSize:13,fontWeight:700}}>Cancel</button>
+        </div>}
+        <button onClick={wizNext} style={btnDim}>DONE MOVING ▶</button>
+      </div>}
+
+      {/* DIPLOMACY */}
+      {ws==="diplomacy"&&<div>
+        <div style={{fontSize:16,color:C.dm,marginBottom:10}}>Students negotiate verbally. Use buttons to transfer resources (2 per click).</div>
+        {cn==="usa"&&d.iso&&<div style={{marginBottom:14}}>
+          <button onClick={()=>{setNd(p=>({...p,usa:{...p.usa,iso:false}}));addLog("🇺🇸 USA ENTERS THE WAR!")}} style={{padding:"10px 18px",background:C.rd+"22",color:C.rd,border:`2px solid ${C.rd}`,borderRadius:7,fontSize:17,fontWeight:800,marginBottom:10,display:"block",width:"100%"}}>🇺🇸 ENTER THE WAR</button>
+          <div style={{fontSize:16,color:"#ffaa33",fontWeight:700,marginBottom:6}}>LEND-LEASE:</div>
+          {NO.filter(n=>n!=="usa").map(nId=><div key={nId} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,fontSize:14}}>
+            <span style={{minWidth:80,fontWeight:700,color:NAT[nId].acc}}>{NAT[nId].fl} {NAT[nId].nm}</span>
+            {["i","o","m"].map(r=><button key={r} onClick={()=>{if(d.res[r]>=3){setNd(p=>{const nn={...p};nn.usa={...nn.usa,res:{...nn.usa.res,[r]:nn.usa.res[r]-3}};nn[nId]={...nn[nId],res:{...nn[nId].res,[r]:nn[nId].res[r]+3}};return nn});addLog(`🤝 USA → ${NAT[nId].nm}: 3 ${r}`)}}} style={{padding:"3px 8px",background:"#172030",color:C.gd,border:`1px solid ${C.bd}`,borderRadius:4,fontSize:12,fontWeight:700}}>+3 {r}</button>)}
+          </div>)}
+        </div>}
+        <div style={{fontSize:14,color:C.dm,letterSpacing:1,fontWeight:700,marginBottom:6}}>TRANSFER FROM {natInfo.nm.toUpperCase()}</div>
+        {NO.filter(n=>n!==cn).map(nId=><div key={nId} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}>
+          <span style={{fontSize:14,color:NAT[nId].acc,minWidth:70,fontWeight:700}}>{NAT[nId].fl}</span>
+          {["i","o","m","p"].map(r=><button key={r} onClick={()=>{if(d.res[r]>=2){setNd(p=>{const nn={...p};nn[cn]={...nn[cn],res:{...nn[cn].res,[r]:nn[cn].res[r]-2}};nn[nId]={...nn[nId],res:{...nn[nId].res,[r]:nn[nId].res[r]+2}};return nn});addLog(`🤝 ${natInfo.nm} → ${NAT[nId].nm}: 2 ${r}`)}}} style={{padding:"3px 8px",background:"#172030",color:C.dm,border:`1px solid ${C.bd}`,borderRadius:4,fontSize:12,fontWeight:600}}>{{i:"ind",o:"oil",m:"man",p:"PC"}[r]}</button>)}
+        </div>)}
+        <button onClick={wizNext} style={{...btnGold,marginTop:14}}>FINALIZE TURN ▶</button>
+      </div>}
+
+      {/* SUMMARY */}
+      {ws==="summary"&&<div>
+        <div style={{fontSize:22,fontWeight:800,color:C.gn,marginBottom:14}}>✅ {n.nm} — Turn Complete</div>
+        <div style={{background:"#172030",borderRadius:10,padding:16,fontSize:16,lineHeight:1.8,marginBottom:16}}>
+          {ts[cn]?.research&&<div style={{color:"#bb88ff"}}>🔬 {ts[cn].research}</div>}
+          {ts[cn]?.built?.map((b,i)=><div key={i} style={{color:"#77ccff"}}>🔨 Built {b}</div>)}
+          {ts[cn]?.moved?.map((m,i)=><div key={i} style={{color:C.gn}}>➡️ Moved {m}</div>)}
+          {!ts[cn]?.research&&!ts[cn]?.built?.length&&!ts[cn]?.moved?.length&&<div style={{color:C.dm}}>No major actions this turn.</div>}
+        </div>
+        <button onClick={wizNext} style={btnGold}>{cni<NO.length-1?"NEXT NATION ▶":"RESOLVE BATTLES ▶"}</button>
+      </div>}
+    </div>;
+  };
+
+  // Shared button styles
+  const btnGold={width:"100%",padding:"14px",background:`linear-gradient(135deg,${C.gd},${C.gk})`,color:"#0c1018",fontWeight:900,fontSize:20,border:"none",borderRadius:8,letterSpacing:2,fontFamily:"Georgia,serif"};
+  const btnDim={width:"100%",padding:"12px",background:"#172030",color:C.dm,border:`2px solid ${C.bd}`,borderRadius:8,fontSize:18,fontWeight:700};
+
+  return(<div style={{width:"100%",height:"100vh",background:C.bg,color:C.tx,fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+    {/* HEADER */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 18px",background:C.pn,borderBottom:`2px solid ${C.bd}`,minHeight:50}}>
+      <div style={{display:"flex",alignItems:"center",gap:14}}>
+        <span style={{fontSize:22,fontWeight:700,color:C.gd,fontFamily:"Georgia,serif",letterSpacing:3}}>THEATER OF WAR</span>
+        <span style={{fontSize:14,color:C.dm,padding:"3px 10px",background:"#172030",borderRadius:6}}>{slotName}</span>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:16}}>
+        <span style={{fontSize:16,color:C.dm}}>Turn <b style={{color:C.br,fontSize:20}}>{turn}</b>/72</span>
+        <span style={{color:C.gd,fontWeight:700,fontSize:22,fontFamily:"Georgia,serif"}}>{gd(turn)}</span>
+        <button onClick={manualSave} style={{padding:"4px 14px",background:"#172030",color:C.dm,border:`1px solid ${C.bd}`,borderRadius:6,fontSize:14,fontWeight:700}}>💾 SAVE</button>
+        <button onClick={()=>{manualSave();setScreen("saves")}} style={{padding:"4px 14px",background:"#172030",color:C.dm,border:`1px solid ${C.bd}`,borderRadius:6,fontSize:14,fontWeight:700}}>📁 SWITCH</button>
+      </div>
+    </div>
+
+    <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+      {/* LEFT: Turn Progress */}
+      <div style={{width:200,background:C.pn,borderRight:`2px solid ${C.bd}`,display:"flex",flexDirection:"column",overflow:"auto"}}>
+        <div style={{padding:"8px 12px",fontSize:11,color:C.dm,letterSpacing:3,borderBottom:`1px solid ${C.bd}`,fontWeight:700}}>TURN PROGRESS</div>
+        {NO.map((nId,idx)=>{const n=NAT[nId];const isCur=tp==="nations"&&idx===cni;const isDone=tp==="nations"?idx<cni:true;const isAi=nc[nId]==="ai";
+          return <div key={nId} style={{padding:"8px 12px",background:isCur?n.col+"44":"transparent",borderLeft:isCur?`4px solid ${n.acc}`:"4px solid transparent",borderBottom:`1px solid ${C.bd}22`,opacity:isDone&&!isCur?0.5:1}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontWeight:700,color:n.acc,fontSize:15}}>{n.fl} {n.nm}</span>
+              {isDone&&!isCur&&<span style={{fontSize:12,color:C.gn,fontWeight:800}}>✔</span>}
+              {isCur&&<span style={{fontSize:12,color:C.gd,fontWeight:800}}>◀</span>}
+            </div>
+            {isAi&&<div style={{fontSize:11,color:C.rd,fontWeight:600}}>🤖 AI</div>}
+          </div>})}
+        <div style={{marginTop:"auto",padding:12,borderTop:`2px solid ${C.bd}`}}>
+          <div style={{fontSize:12,color:C.dm,marginBottom:4,fontWeight:700,letterSpacing:2}}>🏆 SCORES</div>
+          {NO.map(nId=><div key={nId} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"2px 0",color:NAT[nId].acc}}>
+            <span>{NAT[nId].fl} {NAT[nId].nm}</span><span style={{fontWeight:700}}>{calcVP(nId)}</span>
+          </div>)}
+        </div>
+      </div>
+
+      {/* CENTER: MAP */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{display:"flex",background:C.pn,borderBottom:`2px solid ${C.bd}`,padding:"0 6px"}}>
+          {TABS.map(t=><button key={t} onClick={()=>setTab(t)} style={{padding:"8px 16px",background:tab===t?"#1a2840":"transparent",color:tab===t?C.gd:C.dm,border:"none",borderBottom:tab===t?`3px solid ${C.gd}`:"3px solid transparent",fontSize:15,fontWeight:700}}>{TAB_LBL[t]}</button>)}
+        </div>
+        <div style={{flex:1,position:"relative",overflow:"hidden"}}>
+          <div style={{width:"100%",height:"100%",backgroundImage:`url(${MAPS[tab]})`,backgroundSize:"contain",backgroundRepeat:"no-repeat",backgroundPosition:"center",backgroundColor:"#e8e4dc",position:"relative"}}>
+            <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.15)"}}/>
+            {visTerrs.map(id=>{
+              const base=TER[id];const t=terrs[id];if(!t)return null;
+              const[xP,yP]=base.p[tab];
+              const isSel=sel===id;const isCon=contested.includes(id);
+              const isMT=mf&&TER[mf].adj.includes(id);
+              const total=t.units.reduce((s,u)=>s+u.count,0);
+              const col=t.ow==="neutral_locked"?"#666":t.ow==="neutral"?"#888":NAT[t.ow]?.col||"#555";
+              const acc=NAT[t.ow]?.acc||"#aaa";
+              const isOwned=t.ow===cn;
+              return <div key={id} onClick={()=>{setSel(id);if(ws==="move"&&!mf&&t.units.some(u=>u.nation===cn))setMf(id)}} style={{position:"absolute",left:`${xP}%`,top:`${yP}%`,transform:"translate(-50%,-50%)",cursor:"pointer",zIndex:isSel?10:isCon?5:1,textAlign:"center"}}>
+                <div style={{
+                  width:isOwned?34:28,height:isOwned?34:28,borderRadius:"50%",background:col,
+                  border:`${isSel?3:2}px solid ${isSel?"#fff":isCon?C.rd:isMT?C.gn:acc}`,
+                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff",fontWeight:700,
+                  boxShadow:isSel?"0 0 14px rgba(255,255,255,0.5)":isCon?"0 0 10px rgba(255,68,68,0.5)":"0 2px 6px rgba(0,0,0,0.5)",
+                  animation:isCon?"pulse 1.5s infinite":"none",position:"relative",
+                  outline:isMT?`2px dashed ${C.gn}`:"none",outlineOffset:3,
+                }}>
+                  {base.r.o>=2?"🛢️":base.r.i>=4?"🏭":total>0?total:""}
+                  {total>0&&<div style={{position:"absolute",top:-7,right:-7,background:"#0c1018",border:`1.5px solid ${acc}`,borderRadius:"50%",width:17,height:17,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#fff"}}>{total}</div>}
+                </div>
+                <div style={{fontSize:9,color:"#333",fontWeight:700,marginTop:2,textShadow:"0 0 3px rgba(255,255,255,0.8)",whiteSpace:"nowrap",letterSpacing:0.3}}>{base.nm}</div>
+              </div>;
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT: WIZARD PANEL */}
+      <div style={{width:340,background:C.pn,borderLeft:`2px solid ${C.bd}`,display:"flex",flexDirection:"column",overflow:"auto"}}>
+        <div style={{flex:1,overflow:"auto"}}>{wizPanel()}</div>
+        {/* Log */}
+        <div style={{padding:"10px 14px",borderTop:`2px solid ${C.bd}`,maxHeight:160,overflow:"auto"}}>
+          <div style={{fontSize:11,color:C.dm,letterSpacing:3,fontWeight:700,marginBottom:4}}>LOG</div>
+          {[...log].reverse().slice(0,12).map((e,i)=><div key={i} style={{padding:"2px 0",fontSize:14,lineHeight:1.4,color:e.msg.includes("⚔")?C.rd:e.msg.includes("━")?C.gd:e.msg.includes("🔬")?"#bb88ff":e.msg.includes("✅")?C.gn:C.dm,borderBottom:`1px solid ${C.bg}`}}>{e.msg}</div>)}
+        </div>
+      </div>
+    </div>
+
+    {/* EVENT MODAL */}
+    {ev&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}} onClick={()=>setEv(null)}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.pn,border:`4px solid ${C.gd}`,borderRadius:20,padding:45,maxWidth:620,textAlign:"center"}}>
+        <div style={{fontSize:17,color:C.gd,letterSpacing:5,fontWeight:800,marginBottom:10}}>HISTORICAL EVENT</div>
+        <div style={{fontSize:34,fontWeight:800,color:"#fff",marginBottom:18,fontFamily:"Georgia,serif"}}>{ev.title}</div>
+        <div style={{fontSize:21,color:C.dm,lineHeight:1.6,marginBottom:22}}>{ev.desc}</div>
+        <button onClick={()=>setEv(null)} style={{padding:"14px 55px",background:`linear-gradient(135deg,${C.gd},${C.gk})`,color:"#0c1018",fontWeight:900,border:"none",borderRadius:10,fontSize:22,fontFamily:"Georgia,serif",letterSpacing:4}}>CONTINUE</button>
+      </div>
+    </div>}
+
+    {/* COMBAT RESULT MODAL */}
+    {combatRes&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}} onClick={()=>setCombatRes(null)}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.pn,border:`4px solid ${C.rd}`,borderRadius:20,padding:45,maxWidth:580,textAlign:"center"}}>
+        <div style={{fontSize:17,color:C.rd,letterSpacing:5,fontWeight:800,marginBottom:10}}>⚔️ COMBAT RESULT</div>
+        <div style={{fontSize:30,fontWeight:800,color:"#fff",marginBottom:20,fontFamily:"Georgia,serif"}}>Battle of {combatRes.ter}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr",gap:16,marginBottom:20,alignItems:"center"}}>
+          <div><div style={{fontSize:15,color:C.rd,fontWeight:800}}>ATTACKER</div><div style={{fontSize:22,fontWeight:800,color:"#fff",margin:"4px 0"}}>{combatRes.atk}</div><div style={{fontSize:42,color:"#ffaa33",fontWeight:800}}>{combatRes.aRoll}</div><div style={{fontSize:14,color:C.dm}}>Base {combatRes.aStr} + d6</div></div>
+          <div style={{fontSize:34,color:C.gd,fontFamily:"Georgia,serif",fontWeight:700}}>VS</div>
+          <div><div style={{fontSize:15,color:C.bl,fontWeight:800}}>DEFENDER</div><div style={{fontSize:22,fontWeight:800,color:"#fff",margin:"4px 0"}}>{combatRes.def}</div><div style={{fontSize:42,color:"#ffaa33",fontWeight:800}}>{combatRes.dRoll}</div><div style={{fontSize:14,color:C.dm}}>Base {combatRes.dStr} + d6</div></div>
+        </div>
+        <div style={{fontSize:26,fontWeight:900,color:C.gn}}>🏆 {combatRes.winner} VICTORIOUS</div>
+        <button onClick={()=>setCombatRes(null)} style={{marginTop:20,padding:"12px 45px",background:"#172030",color:C.tx,border:`2px solid ${C.bd}`,borderRadius:10,fontSize:18,fontWeight:700}}>DISMISS</button>
+      </div>
+    </div>}
+  </div>);
+}
+
+ReactDOM.render(React.createElement(Game),document.getElementById("root"));
+</script>
+</body>
+</html>
